@@ -1,155 +1,19 @@
-const C=window.STA_CONFIG||{};
-let supabaseClient=null, user=null, localMode=false;
-const LOCAL_KEY="sta_max_local_v1";
-let local=JSON.parse(localStorage.getItem(LOCAL_KEY)||"null")||{courses:[],lessons:[],progress:{},streak:0,lastActivity:null};
-
-const $=id=>document.getElementById(id);
-function saveLocal(){localStorage.setItem(LOCAL_KEY,JSON.stringify(local))}
-function configured(){return C.SUPABASE_URL?.startsWith("https://")&&!C.SUPABASE_URL.includes("YOUR_")&&C.SUPABASE_PUBLISHABLE_KEY&&!C.SUPABASE_PUBLISHABLE_KEY.includes("YOUR_")}
-function setMsg(id,t,good=false){$(id).textContent=t;$(id).style.color=good?"#55dc91":""}
-
-async function init(){
-  if(configured()&&window.supabase){
-    supabaseClient=supabase.createClient(C.SUPABASE_URL,C.SUPABASE_PUBLISHABLE_KEY);
-    const {data}=await supabaseClient.auth.getSession(); user=data.session?.user||null;
-    supabaseClient.auth.onAuthStateChange((_e,s)=>{user=s?.user||null; showApp()});
-  }else localMode=true;
-  showApp();
-}
-function showApp(){
-  const signed=!!user;
-  $("authView").classList.toggle("hidden",signed||localMode);
-  $("appView").classList.toggle("hidden",!(signed||localMode));
-  $("logoutBtn").classList.toggle("hidden",!signed);
-  $("syncState").textContent=signed?"☁ Synced to Supabase":localMode?"💾 Local mode":"Not connected";
-  loadAll();
-}
-async function auth(action){
-  const email=$("email").value.trim(), password=$("password").value;
-  if(!email||!password)return setMsg("authMsg","Enter email and password.");
-  if(!supabaseClient)return setMsg("authMsg","Add Supabase settings in js/config.js first.");
-  const r=action==="login"?await supabaseClient.auth.signInWithPassword({email,password}):await supabaseClient.auth.signUp({email,password});
-  if(r.error)return setMsg("authMsg",r.error.message);
-  setMsg("authMsg",action==="login"?"Signed in. Check the dashboard.":"Account created. Check email if confirmation is enabled.",true);
-}
-$("loginBtn").onclick=()=>auth("login");$("signupBtn").onclick=()=>auth("signup");
-$("guestBtn").onclick=()=>{localMode=true;showApp()};$("logoutBtn").onclick=async()=>{await supabaseClient.auth.signOut()};
-$("refreshBtn").onclick=loadAll;
-
-async function dbCourses(){
-  if(localMode)return local.courses;
-  const {data,error}=await supabaseClient.from("courses").select("*").order("created_at",{ascending:false});
-  if(error)throw error; return data||[];
-}
-async function dbLessons(){
-  if(localMode)return local.lessons;
-  const {data,error}=await supabaseClient.from("lessons").select("*").order("order_index");
-  if(error)throw error; return data||[];
-}
-async function dbProgress(){
-  if(localMode)return Object.entries(local.progress).map(([lesson_id,completed])=>({lesson_id,completed}));
-  const {data,error}=await supabaseClient.from("lesson_progress").select("lesson_id,completed").eq("user_id",user.id);
-  if(error)throw error; return data||[];
-}
-async function loadAll(){
-  try{
-    const [courses,lessons,prog]=await Promise.all([dbCourses(),dbLessons(),dbProgress()]);
-    render(courses,lessons,prog);
-  }catch(e){console.error(e);setMsg("generateMsg","Database error: "+e.message)}
-}
-function render(courses,lessons,prog){
-  const p=new Map(prog.map(x=>[x.lesson_id,x.completed]));
-  $("completed").textContent=[...p.values()].filter(Boolean).length;
-  const pct=lessons.length?Math.round([...p.values()].filter(Boolean).length/lessons.length*100):0;
-  $("overall").textContent=pct+"%"; $("streak").textContent=localMode?local.streak:"—";
-  $("courses").innerHTML=courses.length?courses.map(c=>{
-    const ls=lessons.filter(l=>l.course_id===c.id);
-    const mods=[...new Set(ls.map(l=>l.module_title||"Lessons"))];
-    return `<div class="course"><div class="course-head"><strong>${esc(c.name)}</strong><span class="pill">${ls.length} lessons</span></div>${mods.map(m=>`<div class="module"><b>${esc(m)}</b>${ls.filter(l=>(l.module_title||"Lessons")===m).map(l=>lessonHTML(l,p.get(l.id))).join("")}</div>`).join("")}</div>`
-  }).join(""):"<p class='muted'>No courses yet. Paste a YouTube URL above.</p>";
-  const pending=lessons.filter(l=>!p.get(l.id));
-  $("queueCount").textContent=pending.length+" pending";
-  $("queue").innerHTML=pending.slice(0,12).map(l=>`<div class="queue-row"><div><strong>${esc(l.title)}</strong><div class="muted tiny">${esc(l.course_name||"Course")} • ${esc(l.difficulty||"")}</div></div><button class="btn small" onclick="completeLesson('${l.id}')">Complete</button></div>`).join("")||"<p class='muted'>🎉 Nothing pending.</p>";
-  const next=pending[0];
-  $("missionTitle").textContent=next?.title||"All lessons complete!";
-  $("missionDesc").textContent=next?.description||"Great work. Add another course or review your completed lessons.";
-  $("missionBar").style.width=pct+"%";
-  const status=$("statusText");status.className="";
-  if(!next){status.textContent="🟢 MASTERED";status.classList.add("status-green")}
-  else if(local.lastActivity===new Date().toDateString()){status.textContent="🟢 ON TRACK";status.classList.add("status-green")}
-  else if(local.lastActivity){status.textContent="🟡 STUDY TODAY";status.classList.add("status-yellow")}
-  else{status.textContent="🔴 ACTION REQUIRED";status.classList.add("status-red")}
-}
-function lessonHTML(l,done){return `<div class="lesson"><input type="checkbox" ${done?"checked":""} onchange="completeLesson('${l.id}',this.checked)"><div><div class="${done?"done":""}"><strong>${esc(l.title)}</strong></div><small class="muted">${esc(l.duration_minutes?l.duration_minutes+" min":"")} ${l.youtube_url?`• <a href="${esc(l.youtube_url)}" target="_blank" rel="noopener">YouTube</a>`:""}</small></div></div>`}
-window.completeLesson=async(id,checked=true)=>{
-  try{
-    if(localMode){local.progress[id]=checked; if(checked)markActivity();saveLocal();loadAll();return}
-    const payload={user_id:user.id,lesson_id:id,completed:!!checked,completed_at:checked?new Date().toISOString():null};
-    const r=await supabaseClient.from("lesson_progress").upsert(payload,{onConflict:"user_id,lesson_id"});
-    if(r.error)throw r.error; if(checked)markActivity(); loadAll();
-  }catch(e){alert(e.message)}
-};
-function markActivity(){
-  const today=new Date().toDateString();
-  if(local.lastActivity!==today){
-    if(local.lastActivity){
-      const d=Math.round((new Date(today)-new Date(local.lastActivity))/86400000);
-      local.streak=d===1?local.streak+1:1;
-    }else local.streak=1;
-    local.lastActivity=today;saveLocal();
-  }
-}
-$("completeMissionBtn").onclick=async()=>{const pending=[...document.querySelectorAll("#queue .queue-row button")][0];if(pending)pending.click()};
-$("generateBtn").onclick=generateCourse;
-async function generateCourse(){
-  const url=$("youtubeUrl").value.trim(); if(!url)return setMsg("generateMsg","Paste a YouTube URL.");
-  $("generateBtn").disabled=true;setMsg("generateMsg","Analyzing the public YouTube video with Gemini…");
-  try{
-    if(localMode)throw new Error("AI generation needs Supabase Edge Functions. Connect Supabase first.");
-    const {data,error}=await supabaseClient.functions.invoke("analyze-youtube",{body:{youtube_url:url,course_name:$("courseName").value.trim()||null}});
-    if(error)throw error;
-    if(!data?.course)throw new Error(data?.error||"No course returned.");
-    await insertCourseData(data.course);
-    $("youtubeUrl").value="";$("courseName").value="";
-    setMsg("generateMsg","Course generated and saved.",true);loadAll();
-  }catch(e){console.error(e);setMsg("generateMsg","Generation failed: "+e.message)}
-  finally{$("generateBtn").disabled=false}
-}
-async function insertCourseData(c){
-  const courseRow={name:c.name,description:c.description||"",source_url:c.source_url||null,category:c.category||"General"};
-  if(localMode){
-    const cid=crypto.randomUUID();local.courses.push({id:cid,...courseRow});
-    (c.modules||[]).forEach((m,mi)=>(m.lessons||[]).forEach((l,li)=>local.lessons.push({id:crypto.randomUUID(),course_id:cid,course_name:c.name,module_title:m.title,title:l.title,youtube_url:l.youtube_url||c.source_url,duration_minutes:l.duration_minutes||null,difficulty:l.difficulty||"Beginner",description:l.description||"",order_index:mi*100+li})));
-    saveLocal();return;
-  }
-  const {data:course,error:e1}=await supabaseClient.from("courses").insert({...courseRow,user_id:user.id}).select().single();if(e1)throw e1;
-  const rows=[];(c.modules||[]).forEach((m,mi)=>(m.lessons||[]).forEach((l,li)=>rows.push({course_id:course.id,user_id:user.id,module_title:m.title,title:l.title,youtube_url:l.youtube_url||c.source_url,duration_minutes:l.duration_minutes||null,difficulty:l.difficulty||"Beginner",description:l.description||"",order_index:mi*100+li})));
-  if(rows.length){const {error:e2}=await supabaseClient.from("lessons").insert(rows);if(e2)throw e2}
-}
-$("importJsonBtn").onclick=async()=>{
-  const f=$("jsonFile").files[0];if(!f)return setMsg("importMsg","Choose a JSON file.");
-  try{const data=JSON.parse(await f.text());await insertCourseData(data.course||data);setMsg("importMsg","JSON imported.",true);loadAll()}catch(e){setMsg("importMsg",e.message)}
-};
-$("exportJsonBtn").onclick=async()=>{
-  const [courses,lessons]=await Promise.all([dbCourses(),dbLessons()]);
-  download("sharpeningtheaxe-export.json",JSON.stringify({courses,lessons},null,2),"application/json");
-};
-$("importCsvBtn").onclick=async()=>{
-  const f=$("csvFile").files[0];if(!f)return setMsg("importMsg","Choose a CSV file.");
-  try{const rows=parseCSV(await f.text());if(!rows.length)throw new Error("CSV is empty.");const grouped={};
-    rows.forEach(r=>{const n=r.course||"Imported Course";(grouped[n]??={name:n,description:"Imported from CSV",modules:[{title:r.module||"Lessons",lessons:[]}]});grouped[n].modules[0].lessons.push({title:r.title,youtube_url:r.youtube_url,duration_minutes:Number(r.duration_minutes)||null,difficulty:r.difficulty||"Beginner",description:r.description||""})});
-    for(const c of Object.values(grouped))await insertCourseData(c);setMsg("importMsg","CSV imported.",true);loadAll();
-  }catch(e){setMsg("importMsg",e.message)}
-};
-$("exportCsvBtn").onclick=async()=>{
- const [courses,lessons]=await Promise.all([dbCourses(),dbLessons()]);const names=new Map(courses.map(c=>[c.id,c.name]));
- const head=["course","module","title","youtube_url","duration_minutes","difficulty","description"];
- const lines=[head.join(",")].concat(lessons.map(l=>[names.get(l.course_id)||l.course_name,l.module_title,l.title,l.youtube_url,l.duration_minutes,l.difficulty,l.description].map(csvEsc).join(",")));
- download("sharpeningtheaxe-lessons.csv",lines.join("\n"),"text/csv");
-};
-function csvEsc(v){return `"${String(v??"").replaceAll('"','""')}"`}
-function parseCSV(s){const lines=s.split(/\r?\n/).filter(Boolean),head=splitCSV(lines.shift());return lines.map(x=>{const a=splitCSV(x),o={};head.forEach((h,i)=>o[h.trim()]=a[i]??"");return o})}
-function splitCSV(s){const a=[];let cur="",q=false;for(let i=0;i<s.length;i++){const ch=s[i];if(ch==='"'&&s[i+1]==='"'){cur+='"';i++;continue}if(ch==='"'){q=!q;continue}if(ch===","&&!q){a.push(cur);cur="";continue}cur+=ch}a.push(cur);return a}
-function download(name,text,type){const b=new Blob([text],{type}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;a.click();URL.revokeObjectURL(a.href)}
-function esc(x){return String(x??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
-init();
+const C=window.STA_CONFIG||{};let supabaseClient=null,user=null,localMode=false;const LOCAL_KEY='sta_max_local_v3';let local=JSON.parse(localStorage.getItem(LOCAL_KEY)||'null')||{courses:[],lessons:[],progress:{},streak:0,lastActivity:null};const $=id=>document.getElementById(id);function saveLocal(){localStorage.setItem(LOCAL_KEY,JSON.stringify(local))}function configured(){return C.SUPABASE_URL?.startsWith('https://')&&!C.SUPABASE_URL.includes('YOUR_')&&C.SUPABASE_PUBLISHABLE_KEY&&!C.SUPABASE_PUBLISHABLE_KEY.includes('YOUR_')}function setMsg(id,t,good=false){const e=$(id);if(e){e.textContent=t;e.style.color=good?'#55dc91':''}}
+async function init(){if(configured()&&window.supabase){supabaseClient=supabase.createClient(C.SUPABASE_URL,C.SUPABASE_PUBLISHABLE_KEY);const {data}=await supabaseClient.auth.getSession();user=data.session?.user||null;supabaseClient.auth.onAuthStateChange((_e,s)=>{user=s?.user||null;localMode=false;showApp()})}else localMode=true;showApp()}
+function showApp(){const signed=!!user;$('authView').classList.toggle('hidden',signed||localMode);$('appView').classList.toggle('hidden',!(signed||localMode));$('logoutBtn').classList.toggle('hidden',!signed);$('syncState').textContent=signed?'☁ Synced to Supabase':localMode?'💾 Local mode':'Not connected';loadAll()}
+async function auth(action){const email=$('email').value.trim(),password=$('password').value;if(!email||!password)return setMsg('authMsg','Enter email and password.');if(!supabaseClient)return setMsg('authMsg','Configure Supabase first.');const r=action==='login'?await supabaseClient.auth.signInWithPassword({email,password}):await supabaseClient.auth.signUp({email,password});if(r.error)return setMsg('authMsg',r.error.message);setMsg('authMsg',action==='login'?'Signed in.':'Account created. Check email if confirmation is enabled.',true)}
+$('loginBtn').onclick=()=>auth('login');$('signupBtn').onclick=()=>auth('signup');$('guestBtn').onclick=()=>{localMode=true;user=null;showApp()};$('logoutBtn').onclick=async()=>{if(supabaseClient)await supabaseClient.auth.signOut()};$('refreshBtn').onclick=loadAll;$('searchInput').oninput=loadAll;$('filterSelect').onchange=loadAll;$('addCourseBtn').onclick=()=>openCourseEditor();$('modalClose').onclick=closeModal;$('modal').onclick=e=>{if(e.target.id==='modal')closeModal()};
+async function dbCourses(){if(localMode)return local.courses;const {data,error}=await supabaseClient.from('courses').select('*').order('created_at',{ascending:false});if(error)throw error;return data||[]}async function dbLessons(){if(localMode)return local.lessons;const {data,error}=await supabaseClient.from('lessons').select('*').order('order_index');if(error)throw error;return data||[]}async function dbProgress(){if(localMode)return Object.entries(local.progress).map(([lesson_id,completed])=>({lesson_id,completed}));const {data,error}=await supabaseClient.from('lesson_progress').select('lesson_id,completed').eq('user_id',user.id);if(error)throw error;return data||[]}
+async function loadAll(){try{const [courses,lessons,prog]=await Promise.all([dbCourses(),dbLessons(),dbProgress()]);render(courses,lessons,prog)}catch(e){console.error(e);setMsg('generateMsg','Database error: '+e.message)}}
+function render(courses,lessons,prog){const p=new Map(prog.map(x=>[x.lesson_id,!!x.completed]));const search=($('searchInput').value||'').toLowerCase();const filter=$('filterSelect').value;const completedCount=lessons.filter(l=>p.get(l.id)).length;const pct=lessons.length?Math.round(completedCount/lessons.length*100):0;$('completed').textContent=completedCount;$('overall').textContent=pct+'%';$('streak').textContent=localMode?local.streak:'—';const visibleCourses=courses.filter(c=>{const cls=lessons.filter(l=>l.course_id===c.id);return !search||c.name.toLowerCase().includes(search)||cls.some(l=>(l.title||'').toLowerCase().includes(search))});$('courses').innerHTML=visibleCourses.length?visibleCourses.map(c=>courseHTML(c,lessons.filter(l=>l.course_id===c.id),p,search,filter)).join(''):'<p class="muted">No matching courses. Add one or paste a YouTube URL.</p>';const pending=lessons.filter(l=>!p.get(l.id)&&(!search||l.title.toLowerCase().includes(search))&&(filter!=='completed'));$('queueCount').textContent=pending.length+' pending';$('queue').innerHTML=pending.slice(0,12).map(l=>`<div class="queue-row"><div><strong>${esc(l.title)}</strong><div class="muted tiny">${esc(l.course_name||'Course')} • ${esc(l.difficulty||'')}</div></div><button class="btn small" onclick="completeLesson('${l.id}')">Complete</button></div>`).join('')||'<p class="muted">🎉 Nothing pending.</p>';const next=pending[0];$('missionTitle').textContent=next?.title||'All lessons complete!';$('missionDesc').textContent=next?.description||'Great work. Add another course or create another one.';$('missionBar').style.width=pct+'%';const status=$('statusText');status.className='';if(!next){status.textContent='🟢 MASTERED';status.classList.add('status-green')}else if(local.lastActivity===new Date().toDateString()){status.textContent='🟢 ON TRACK';status.classList.add('status-green')}else if(local.lastActivity){status.textContent='🟡 STUDY TODAY';status.classList.add('status-yellow')}else{status.textContent='🔴 ACTION REQUIRED';status.classList.add('status-red')}}
+function courseHTML(c,ls,p,search,filter){const mods=[...new Set(ls.map(l=>l.module_title||'Lessons'))];const visible=ls.filter(l=>(filter==='all'||(filter==='completed'?p.get(l.id):!p.get(l.id)))&&(!search||l.title.toLowerCase().includes(search)||c.name.toLowerCase().includes(search)));return `<div class="course"><div class="course-head"><div><strong>${esc(c.name)}</strong><div class="muted tiny">${esc(c.category||'General')} • ${ls.length} lessons</div></div><div class="course-actions"><button class="btn small" onclick="openCourseEditor('${c.id}')">✏️ Rename/Edit</button><button class="btn small danger" onclick="deleteCourse('${c.id}')">🗑 Delete</button></div></div>${mods.map(m=>{const ml=visible.filter(l=>(l.module_title||'Lessons')===m);if(!ml.length)return '';return `<div class="module"><div class="module-head"><b>${esc(m)}</b><button class="btn small" onclick="renameModule('${c.id}',${JSON.stringify(m)})">✏️ Rename</button></div>${ml.map(l=>lessonHTML(l,p.get(l.id))).join('')}</div>`}).join('')}</div>`}
+function lessonHTML(l,done){return `<div class="lesson"><input type="checkbox" ${done?'checked':''} onchange="completeLesson('${l.id}',this.checked)"><div style="flex:1"><div class="${done?'done':''}"><strong>${esc(l.title)}</strong></div><small class="muted">${esc(l.duration_minutes?l.duration_minutes+' min':'')} ${l.youtube_url?`• <a href="${esc(l.youtube_url)}" target="_blank" rel="noopener">YouTube</a>`:''}</small></div><div class="course-actions"><button class="btn small" onclick="openLessonEditor('${l.id}')">✏️</button><button class="btn small danger" onclick="deleteLesson('${l.id}')">🗑</button></div></div>`}
+window.completeLesson=async(id,checked=true)=>{try{if(localMode){local.progress[id]=checked;if(checked)markActivity();saveLocal();loadAll();return}const payload={user_id:user.id,lesson_id:id,completed:!!checked,completed_at:checked?new Date().toISOString():null};const r=await supabaseClient.from('lesson_progress').upsert(payload,{onConflict:'user_id,lesson_id'});if(r.error)throw r.error;if(checked)markActivity();loadAll()}catch(e){alert(e.message)}};function markActivity(){const today=new Date().toDateString();if(local.lastActivity!==today){if(local.lastActivity){const d=Math.round((new Date(today)-new Date(local.lastActivity))/86400000);local.streak=d===1?local.streak+1:1}else local.streak=1;local.lastActivity=today;saveLocal()}}$('completeMissionBtn').onclick=()=>{const b=document.querySelector('#queue .queue-row button');if(b)b.click()};
+async function generateCourse(){const url=$('youtubeUrl').value.trim();if(!url)return setMsg('generateMsg','Paste a YouTube URL.');if(localMode)return setMsg('generateMsg','Connect Supabase to use the secure Gemini Edge Function.');$('generateBtn').disabled=true;setMsg('generateMsg','Analyzing video and building your course…');try{const {data,error}=await supabaseClient.functions.invoke('analyze-youtube',{body:{youtube_url:url,course_name:$('courseName').value.trim()||null}});if(error)throw error;if(!data?.course)throw new Error(data?.error||'No course returned.');await insertCourseData(data.course);$('youtubeUrl').value='';$('courseName').value='';setMsg('generateMsg','Course generated and saved.',true);loadAll()}catch(e){console.error(e);setMsg('generateMsg','Generation failed: '+e.message)}finally{$('generateBtn').disabled=false}}$('generateBtn').onclick=generateCourse;
+async function insertCourseData(c){const courseRow={name:c.name||'Untitled Course',description:c.description||'',source_url:c.source_url||null,category:c.category||'General'};if(localMode){const cid=crypto.randomUUID();local.courses.push({id:cid,...courseRow});(c.modules||[]).forEach((m,mi)=>(m.lessons||[]).forEach((l,li)=>local.lessons.push({id:crypto.randomUUID(),course_id:cid,course_name:c.name,module_title:m.title||'Lessons',title:l.title, youtube_url:l.youtube_url||c.source_url,duration_minutes:l.duration_minutes||null,difficulty:l.difficulty||'Beginner',description:l.description||'',order_index:mi*100+li})));saveLocal();return}const {data:course,error:e1}=await supabaseClient.from('courses').insert({...courseRow,user_id:user.id}).select().single();if(e1)throw e1;const rows=[];(c.modules||[]).forEach((m,mi)=>(m.lessons||[]).forEach((l,li)=>rows.push({course_id:course.id,user_id:user.id,module_title:m.title||'Lessons',title:l.title, youtube_url:l.youtube_url||c.source_url,duration_minutes:l.duration_minutes||null,difficulty:l.difficulty||'Beginner',description:l.description||'',order_index:mi*100+li})));if(rows.length){const {error:e2}=await supabaseClient.from('lessons').insert(rows);if(e2)throw e2}}
+function openModal(title,body){$('modalTitle').textContent=title;$('modalBody').innerHTML=body;$('modal').classList.remove('hidden')}function closeModal(){$('modal').classList.add('hidden');$('modalBody').innerHTML=''}
+window.openCourseEditor=async id=>{if(!id){openModal('Add course',`<form class="edit-form" id="editForm"><input id="fName" placeholder="Course name" required><input id="fCategory" placeholder="Category"><textarea id="fDesc" placeholder="Description"></textarea><div class="modal-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn primary">Save</button></div></form>`);$('editForm').onsubmit=async e=>{e.preventDefault();const c={name:$('fName').value.trim(),category:$('fCategory').value.trim()||'General',description:$('fDesc').value.trim(),source_url:null};if(!c.name)return;if(localMode){c.id=crypto.randomUUID();local.courses.unshift(c);saveLocal();closeModal();loadAll();return}const {error}=await supabaseClient.from('courses').insert({...c,user_id:user.id});if(error)return alert(error.message);closeModal();loadAll();};return}const c=(await dbCourses()).find(x=>x.id===id);if(!c)return;openModal('Edit course',`<form class="edit-form" id="editForm"><input id="fName" value="${attr(c.name)}" required><input id="fCategory" value="${attr(c.category||'General')}"><textarea id="fDesc">${esc(c.description||'')}</textarea><div class="modal-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn primary">Save changes</button></div></form>`);$('editForm').onsubmit=async e=>{e.preventDefault();const v={name:$('fName').value.trim(),category:$('fCategory').value.trim()||'General',description:$('fDesc').value.trim()};if(localMode){Object.assign(c,v);saveLocal();closeModal();loadAll();return}const {error}=await supabaseClient.from('courses').update(v).eq('id',id).eq('user_id',user.id);if(error)return alert(error.message);closeModal();loadAll()}}
+window.openLessonEditor=async id=>{const ls=await dbLessons(),l=ls.find(x=>x.id===id);if(!l)return;openModal('Edit lesson',`<form class="edit-form" id="editForm"><input id="fTitle" value="${attr(l.title)}" required><input id="fModule" value="${attr(l.module_title||'Lessons')}" placeholder="Module"><input id="fUrl" value="${attr(l.youtube_url||'')}" placeholder="YouTube URL"><input id="fDuration" type="number" min="0" value="${attr(l.duration_minutes||'')}" placeholder="Minutes"><select id="fDifficulty"><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select><textarea id="fDesc">${esc(l.description||'')}</textarea><div class="modal-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn primary">Save changes</button></div></form>`);$('fDifficulty').value=l.difficulty||'Beginner';$('editForm').onsubmit=async e=>{e.preventDefault();const v={title:$('fTitle').value.trim(),module_title:$('fModule').value.trim()||'Lessons',youtube_url:$('fUrl').value.trim()||null,duration_minutes:Number($('fDuration').value)||null,difficulty:$('fDifficulty').value,description:$('fDesc').value.trim()};if(localMode){Object.assign(l,v);saveLocal();closeModal();loadAll();return}const {error}=await supabaseClient.from('lessons').update(v).eq('id',id).eq('user_id',user.id);if(error)return alert(error.message);closeModal();loadAll()}}
+window.renameModule=async(courseId,oldName)=>{const n=prompt('New module name:',oldName);if(!n||n.trim()===oldName)return;const name=n.trim();if(localMode){local.lessons.filter(l=>l.course_id===courseId&&l.module_title===oldName).forEach(l=>l.module_title=name);saveLocal();loadAll();return}const {error}=await supabaseClient.from('lessons').update({module_title:name}).eq('course_id',courseId).eq('user_id',user.id).eq('module_title',oldName);if(error)return alert(error.message);loadAll()}
+window.deleteLesson=async id=>{if(!confirm('Delete this lesson permanently? Its progress will also be removed.'))return;if(localMode){delete local.progress[id];local.lessons=local.lessons.filter(l=>l.id!==id);saveLocal();loadAll();return}const {error}=await supabaseClient.from('lessons').delete().eq('id',id).eq('user_id',user.id);if(error)return alert(error.message);loadAll()};window.deleteCourse=async id=>{if(!confirm('Delete this entire course, all its lessons, and their progress? This cannot be undone.'))return;if(localMode){const ids=local.lessons.filter(l=>l.course_id===id).map(l=>l.id);ids.forEach(x=>delete local.progress[x]);local.lessons=local.lessons.filter(l=>l.course_id!==id);local.courses=local.courses.filter(c=>c.id!==id);saveLocal();loadAll();return}const {error}=await supabaseClient.from('courses').delete().eq('id',id).eq('user_id',user.id);if(error)return alert(error.message);loadAll()};
+$('importJsonBtn').onclick=async()=>{const f=$('jsonFile').files[0];if(!f)return setMsg('importMsg','Choose a JSON file.');try{const d=JSON.parse(await f.text());await insertCourseData(d.course||d);setMsg('importMsg','JSON imported.',true);loadAll()}catch(e){setMsg('importMsg',e.message)}};$('exportJsonBtn').onclick=async()=>{const [courses,lessons]=await Promise.all([dbCourses(),dbLessons()]);download('sharpeningtheaxe-v3-export.json',JSON.stringify({courses,lessons},null,2),'application/json')};$('importCsvBtn').onclick=async()=>{const f=$('csvFile').files[0];if(!f)return setMsg('importMsg','Choose a CSV file.');try{const rows=parseCSV(await f.text()),grouped={};rows.forEach(r=>{const n=r.course||'Imported Course';(grouped[n]??={name:n,description:'Imported from CSV',modules:[]});let m=grouped[n].modules.find(x=>x.title===(r.module||'Lessons'));if(!m){m={title:r.module||'Lessons',lessons:[]};grouped[n].modules.push(m)}m.lessons.push({title:r.title,youtube_url:r.youtube_url,duration_minutes:Number(r.duration_minutes)||null,difficulty:r.difficulty||'Beginner',description:r.description||''})});for(const c of Object.values(grouped))await insertCourseData(c);setMsg('importMsg','CSV imported.',true);loadAll()}catch(e){setMsg('importMsg',e.message)}};$('exportCsvBtn').onclick=async()=>{const [courses,lessons]=await Promise.all([dbCourses(),dbLessons()]);const names=new Map(courses.map(c=>[c.id,c.name]));const h=['course','module','title','youtube_url','duration_minutes','difficulty','description'];download('sharpeningtheaxe-v3-lessons.csv',[h.join(','),...lessons.map(l=>[names.get(l.course_id)||l.course_name,l.module_title,l.title,l.youtube_url,l.duration_minutes,l.difficulty,l.description].map(csvEsc).join(','))].join('\n'),'text/csv')};function csvEsc(v){return `"${String(v??'').replaceAll('"','""')}"`}function parseCSV(s){const lines=s.split(/\r?\n/).filter(Boolean),head=splitCSV(lines.shift());return lines.map(x=>{const a=splitCSV(x),o={};head.forEach((h,i)=>o[h.trim()]=a[i]??'');return o})}function splitCSV(s){const a=[];let cur='',q=false;for(let i=0;i<s.length;i++){const ch=s[i];if(ch==='"'&&s[i+1]==='"'){cur+='"';i++;continue}if(ch==='"'){q=!q;continue}if(ch===','&&!q){a.push(cur);cur='';continue}cur+=ch}a.push(cur);return a}function download(name,text,type){const b=new Blob([text],{type}),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click();URL.revokeObjectURL(a.href)}function attr(x){return String(x??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}function esc(x){return String(x??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}init();
