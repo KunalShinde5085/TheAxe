@@ -1,0 +1,27 @@
+{
+  "name": "HTML Example Course",
+  "description": "Example format for manual JSON import.",
+  "category": "HTML",
+  "source_url": "https://www.youtube.com/watch?v=example",
+  "modules": [
+    {
+      "title": "HTML Basics",
+      "lessons": [
+        {
+          "title": "Document Structure",
+          "description": "Learn the basic HTML document structure.",
+          "youtube_url": "https://www.youtube.com/watch?v=example",
+          "duration_minutes": 20,
+          "difficulty": "Beginner"
+        },
+        {
+          "title": "Links and Images",
+          "description": "Practice links and images.",
+          "youtube_url": "https://www.youtube.com/watch?v=example",
+          "duration_minutes": 25,
+          "difficulty": "Beginner"
+        }
+      ]
+    }
+  ]
+}

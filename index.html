@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SharpeningTheAxe MAX</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div>
+    <div class="eyebrow">SHARPENING THE AXE • MAX</div>
+    <h1>AI Learning Command Center</h1>
+    <p>Turn YouTube learning into structured courses, track progress and stay on schedule.</p>
+  </div>
+  <div class="top-actions">
+    <span id="syncState" class="pill">Offline mode</span>
+    <button id="logoutBtn" class="btn ghost hidden">Logout</button>
+  </div>
+</header>
+
+<div id="authView" class="auth-wrap">
+  <section class="auth-card">
+    <div class="logo">⚒️</div>
+    <h2>Welcome back</h2>
+    <p class="muted">Sign in to sync your courses and progress with Supabase.</p>
+    <input id="email" type="email" placeholder="Email">
+    <input id="password" type="password" placeholder="Password">
+    <div class="auth-actions">
+      <button id="loginBtn" class="btn primary">Sign in</button>
+      <button id="signupBtn" class="btn">Create account</button>
+    </div>
+    <p id="authMsg" class="msg"></p>
+    <button id="guestBtn" class="link-btn">Continue locally without an account</button>
+  </section>
+</div>
+
+<main id="appView" class="hidden">
+  <section class="hero-grid">
+    <div class="card mission-card">
+      <div class="section-title"><span>🚦 Status</span><span id="statusText">—</span></div>
+      <h2 id="missionTitle">No mission yet</h2>
+      <p id="missionDesc" class="muted">Add a course with AI to generate your first learning plan.</p>
+      <div class="progress"><span id="missionBar"></span></div>
+      <button id="completeMissionBtn" class="btn primary">✓ Complete next lesson</button>
+    </div>
+    <div class="card stat-card"><span>Overall</span><strong id="overall">0%</strong><small>all lessons</small></div>
+    <div class="card stat-card"><span>Completed</span><strong id="completed">0</strong><small>lessons</small></div>
+    <div class="card stat-card"><span>🔥 Streak</span><strong id="streak">0</strong><small>days</small></div>
+  </section>
+
+  <section class="card ai-card">
+    <div class="section-title"><span>🤖 AI Course Generator</span><span class="pill">Gemini</span></div>
+    <p class="muted">Paste a public YouTube video URL. Gemini can analyze public YouTube videos directly; the Edge Function keeps your Gemini secret off the browser.</p>
+    <div class="url-row">
+      <input id="youtubeUrl" placeholder="https://www.youtube.com/watch?v=...">
+      <input id="courseName" placeholder="Course name (optional)">
+      <button id="generateBtn" class="btn primary">✨ Generate course</button>
+    </div>
+    <div id="generateMsg" class="msg"></div>
+  </section>
+
+  <section class="two-col">
+    <section class="card">
+      <div class="section-title"><span>📚 Courses</span><button id="refreshBtn" class="btn small">Refresh</button></div>
+      <div id="courses"></div>
+    </section>
+    <section class="card">
+      <div class="section-title"><span>📥 Import / Export</span></div>
+      <p class="muted">Use JSON for full-fidelity AI course imports. CSV is available for simple lesson imports.</p>
+      <input id="jsonFile" type="file" accept=".json,application/json">
+      <button id="importJsonBtn" class="btn">Import JSON</button>
+      <button id="exportJsonBtn" class="btn">Export JSON</button>
+      <hr>
+      <input id="csvFile" type="file" accept=".csv,text/csv">
+      <button id="importCsvBtn" class="btn">Import CSV</button>
+      <button id="exportCsvBtn" class="btn">Export CSV</button>
+      <p class="muted tiny">CSV columns: course,module,title,youtube_url,duration_minutes,difficulty,description.</p>
+      <div id="importMsg" class="msg"></div>
+    </section>
+  </section>
+
+  <section class="card">
+    <div class="section-title"><span>🎯 Learning Queue</span><span id="queueCount" class="pill">0 pending</span></div>
+    <div id="queue"></div>
+  </section>
+</main>
+
+<footer>SharpeningTheAxe MAX • Supabase sync + Gemini AI • Local fallback included</footer>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

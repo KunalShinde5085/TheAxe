@@ -1,0 +1,7 @@
+project_id = "YOUR_PROJECT_REF"
+
+[functions.analyze-youtube]
+verify_jwt = true
+
+[functions.import-course-json]
+verify_jwt = true
